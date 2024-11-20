@@ -10,10 +10,16 @@ import android.view.Surface;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+import androidx.camera.core.Camera;
+import androidx.camera.core.CameraInfo;
+import androidx.camera.core.CameraSelector;
 import androidx.camera.core.Preview;
 import androidx.camera.core.SurfaceRequest;
+import androidx.camera.core.ResolutionSelector;
+import androidx.camera.core.AspectRatioStrategy;
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugins.camerax.GeneratedCameraXLibrary.PreviewHostApi;
+import io.flutter.plugins.camerax.GeneratedCameraXLibrary.ResolutionInfo;
 import io.flutter.view.TextureRegistry;
 import java.util.Objects;
 import java.util.concurrent.Executors;
@@ -40,16 +46,28 @@ public class PreviewHostApiImpl implements PreviewHostApi {
   public void create(
       @NonNull Long identifier,
       @Nullable Long rotation,
-      @Nullable GeneratedCameraXLibrary.ResolutionInfo targetResolution) {
+      @Nullable ResolutionInfo targetResolution) {
     Preview.Builder previewBuilder = cameraXProxy.createPreviewBuilder();
+    
+    // Set consistent preview scaling mode
+    previewBuilder.setTargetRotation(Surface.ROTATION_0)
+                 .setCaptureMode(Preview.CaptureMode.MINIMIZE_LATENCY)
+                 .setResolutionSelector(
+                     ResolutionSelector.Builder()
+                         .setAspectRatioStrategy(
+                             AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                         .build());
+
     if (rotation != null) {
       previewBuilder.setTargetRotation(rotation.intValue());
     }
     if (targetResolution != null) {
       previewBuilder.setTargetResolution(
           new Size(
-              targetResolution.getWidth().intValue(), targetResolution.getHeight().intValue()));
+              targetResolution.getWidth().intValue(),
+              targetResolution.getHeight().intValue()));
     }
+    
     Preview preview = previewBuilder.build();
     instanceManager.addDartCreatedInstance(preview, identifier);
   }
@@ -81,6 +99,17 @@ public class PreviewHostApiImpl implements PreviewHostApi {
         surfaceTexture.setDefaultBufferSize(
             request.getResolution().getWidth(), request.getResolution().getHeight());
         Surface flutterSurface = cameraXProxy.createSurface(surfaceTexture);
+
+        // Add preview transform for front camera
+        Preview preview = request.getCamera();
+        if (preview != null && preview.getCameraInfo().getLensFacing() == CameraSelector.LENS_FACING_FRONT) {
+          request.setTransformationInfo(
+              new SurfaceRequest.TransformationInfo.Builder()
+                  .setTargetRotation(Surface.ROTATION_0)
+                  .setHorizontalFlip(true)  // This will mirror the preview for front camera
+                  .build());
+        }
+
         request.provideSurface(
             flutterSurface,
             Executors.newSingleThreadExecutor(),
@@ -136,12 +165,12 @@ public class PreviewHostApiImpl implements PreviewHostApi {
 
   /** Returns the resolution information for the specified {@link Preview}. */
   @Override
-  public GeneratedCameraXLibrary.ResolutionInfo getResolutionInfo(@NonNull Long identifier) {
+  public ResolutionInfo getResolutionInfo(@NonNull Long identifier) {
     Preview preview = (Preview) Objects.requireNonNull(instanceManager.getInstance(identifier));
     Size resolution = preview.getResolutionInfo().getResolution();
 
-    GeneratedCameraXLibrary.ResolutionInfo.Builder resolutionInfo =
-        new GeneratedCameraXLibrary.ResolutionInfo.Builder()
+    ResolutionInfo.Builder resolutionInfo =
+        new ResolutionInfo.Builder()
             .setWidth(Long.valueOf(resolution.getWidth()))
             .setHeight(Long.valueOf(resolution.getHeight()));
     return resolutionInfo.build();
